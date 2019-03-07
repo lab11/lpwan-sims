@@ -19,54 +19,6 @@
  This file is further modified as noted in https://github.com/lab11/lpwan-sims
 """
 
-#TODO: fix this description
-"""
- SYNOPSIS:
-   ./lorasim.py <nodes> <avgsend> <experiment> <simtime> <collision> <networks> <basedist>
- DESCRIPTION:
-    nodes
-        number of nodes to simulate
-    avgsend
-        average sending interval in milliseconds
-    experiment
-        experiment is an integer that determines with what radio settings the
-        simulation is run. All nodes are configured with a fixed transmit power
-        and a single transmit frequency, unless stated otherwise.
-        0   use the settings with the the slowest datarate (SF12, BW125, CR4/8).
-        1   similair to experiment 0, but use a random choice of 3 transmit
-            frequencies.
-        2   use the settings with the fastest data rate (SF6, BW500, CR4/5).
-        3   optimise the setting per node based on the distance to the gateway.
-        4   use the settings as defined in LoRaWAN (SF12, BW125, CR4/5).
-        5   similair to experiment 3, but also optimises the transmit power.
-    simtime
-        total running time in milliseconds
-    collision
-        set to 1 to enable the full collision check, 0 to use a simplified check.
-        With the simplified check, two messages collide when they arrive at the
-        same time, on the same frequency and spreading factor. The full collision
-        check considers the 'capture effect', whereby a collision of one or the
-    networks
-        number of LoRa networks
-    basedist
-        X-distance between two base stations
- OUTPUT
-    The result of every simulation run will be appended to a file named expX.dat,
-    whereby X is the experiment number. The file contains a space separated table
-    of values for nodes, collisions, transmissions and total energy spent. The
-    data file can be easily plotted using e.g. gnuplot.
-"""
-
-#TODO: list
-# * Remove input arguments and make them simulation parameters
-# * Split code into init, run, and functions
-# * Set frequency, channel, spreading factor, etc. based on US parameters
-# * Check path loss calculation
-# * Check these sensitivity numbers
-# * Check how we're distributing nodes around a central point
-# * Create basestation/network scenarios
-
-
 import simpy
 import random
 import numpy as np
@@ -75,27 +27,6 @@ import sys
 import matplotlib.pyplot as plt
 import os
 
-# turn on/off graphics
-graphics = True
-
-# do the full collision check
-full_collision = True
-
-# experiments:
-# 0: packet with longest airtime, aloha-style experiment
-# 1: one with 3 frequencies, 1 with 1 frequency
-# 2: with shortest packets, still aloha-style
-# 3: with shortest possible packets depending on distance
-
-
-# this is an array with measured values for sensitivity
-# see paper, Table 3
-sf7 = np.array([7,-126.5,-124.25,-120.75])
-sf8 = np.array([8,-127.25,-126.75,-124.0])
-sf9 = np.array([9,-131.25,-128.25,-127.5])
-sf10 = np.array([10,-132.75,-130.25,-128.75])
-sf11 = np.array([11,-134.5,-132.75,-128.75])
-sf12 = np.array([12,-133.25,-132.25,-132.25])
 
 #
 # check for collisions at base station
@@ -136,8 +67,7 @@ def checkcollision(packet):
 #
 #        |f1-f2| <= 120 kHz if f1 or f2 has bw 500 
 #        |f1-f2| <= 60 kHz if f1 or f2 has bw 250 
-#        |f1-f2| <= 30 kHz if f1 or f2 has bw 125 
-#TODO: is this still correct in the US?
+#        |f1-f2| <= 30 kHz if f1 or f2 has bw 125
 def frequencyCollision(p1,p2):
     if (abs(p1.freq-p2.freq)<=120 and (p1.bw==500 or p2.bw==500)):
         return True
@@ -154,7 +84,6 @@ def sfCollision(p1, p2):
         return True
     return False
 
-#TODO: check that the timing collisions are actually being handled correctly. It seems that the right packet might not be surviving
 def powerCollision(p1, p2):
     powerThreshold = 6 # dB
     if abs(p1.rssi - p2.rssi) < powerThreshold:
@@ -208,6 +137,23 @@ def airtime(sf,cr,pl,bw):
     Tpayload = payloadSymbNB * Tsym
     return Tpream + Tpayload
 
+# Determine the maximum distance a packet can travel
+# Uses the Hata Model for urban, medium-sized cities
+# tx_power in dB, rx_sensitivity in dB (should be negative)
+# returns distance in kilometers
+def rangeEstimate(tx_power, rx_sensitivity):
+    max_path_loss = tx_power - rx_sensitivity
+    freq_mhz = 915
+    distance_m = 0.0484418*math.exp(0.0724083*max_path_loss)/(freq_mhz**0.837107)*1000
+    return distance_m
+
+# Determine the power of a packet given the distance it has traveled
+# Uses the Hata Model for urban, medium-sized cities
+# tx_power in dB, distance in meters
+def powerEstimate(tx_power, distance_m):
+    freq_mhz = 915
+    rx_power = 69.55 + 26.16*math.log10(freq_mhz) - 13.82*math.log10(100) + (44.9 - 6.55*math.log10(100))*math.log10(distance_m/1000) - (0.8 + (1.1*math.log10(freq_mhz)-0.7)*(1) - 1.56*math.log10(freq_mhz))
+    return rx_power
 
 
 #
@@ -222,140 +168,141 @@ class myBS():
         # This is a hack for now
         global nrBS
         global maxDist
-        global maxX
-        global maxY
         global baseDist
 
         if (nrBS == 1 and self.id == 0):
             self.x = maxDist
-            self.y = maxY
+            self.y = maxDist
+        else:
+            print("Too many base stations!!")
+            sys.exit(1)
 
-        if (nrBS == 2 and self.id == 0):
-            self.x = maxDist
-            self.y = maxY
-
-        if (nrBS == 2 and self.id == 1):
-            self.x = maxDist + baseDist
-            self.y = maxY
-
-        if (nrBS == 3 and self.id == 0):
-            self.x = maxDist + baseDist
-            self.y = maxY
-
-        if (nrBS == 3 and self.id == 1):
-            self.x = maxDist 
-            self.y = maxY
-
-        if (nrBS == 3 and self.id == 2): 
-            self.x = maxDist + 2*baseDist
-            self.y = maxY
-
-        if (nrBS == 4 and self.id == 0): 
-            self.x = maxDist + baseDist
-            self.y = maxY 
-
-        if (nrBS == 4 and self.id == 1):
-            self.x = maxDist 
-            self.y = maxY
-
-        if (nrBS == 4 and self.id == 2): 
-            self.x = maxDist + 2*baseDist
-            self.y = maxY
-
-        if (nrBS == 4 and self.id == 3): 
-            self.x = maxDist + baseDist
-            self.y = maxY + baseDist 
-
-        if (nrBS == 5 and self.id == 0): 
-            self.x = maxDist + baseDist
-            self.y = maxY + baseDist 
-
-        if (nrBS == 5 and self.id == 1): 
-            self.x = maxDist 
-            self.y = maxY + baseDist 
-
-        if (nrBS == 5 and self.id == 2): 
-            self.x = maxDist + 2*baseDist
-            self.y = maxY + baseDist 
-
-        if (nrBS == 5 and self.id == 3): 
-            self.x = maxDist + baseDist
-            self.y = maxY 
-
-        if (nrBS == 5 and self.id == 4): 
-            self.x = maxDist + baseDist
-            self.y = maxY + 2*baseDist 
-
-
-        if (nrBS == 6): 
-            if (self.id < 3):
-                self.x = (self.id+1)*maxX/4.0
-                self.y = maxY/3.0
-            else:
-                self.x = (self.id+1-3)*maxX/4.0
-                self.y = 2*maxY/3.0
-
-        if (nrBS == 8): 
-            if (self.id < 4):
-                self.x = (self.id+1)*maxX/5.0
-                self.y = maxY/3.0
-            else:
-                self.x = (self.id+1-4)*maxX/5.0
-                self.y = 2*maxY/3.0
-
-        if (nrBS == 24): 
-            if (self.id < 8):
-                self.x = (self.id+1)*maxX/9.0
-                self.y = maxY/4.0
-            elif (self.id < 16):
-                self.x = (self.id+1-8)*maxX/9.0
-                self.y = 2*maxY/4.0
-            else:
-                self.x = (self.id+1-16)*maxX/9.0
-                self.y = 3*maxY/4.0
-
-        if (nrBS == 96): 
-            if (self.id < 24):
-                self.x = (self.id+1)*maxX/25.0
-                self.y = maxY/5.0
-            elif (self.id < 48):
-                self.x = (self.id+1-24)*maxX/25.0
-                self.y = 2*maxY/5.0
-            elif (self.id < 72):
-                self.x = (self.id+1-48)*maxX/25.0
-                self.y = 3*maxY/5.0
-            else:
-                self.x = (self.id+1-72)*maxX/25.0
-                self.y = 4*maxY/5.0
+#        if (nrBS == 2 and self.id == 0):
+#            self.x = maxDist
+#            self.y = maxY
+#
+#        if (nrBS == 2 and self.id == 1):
+#            self.x = maxDist + baseDist
+#            self.y = maxY
+#
+#        if (nrBS == 3 and self.id == 0):
+#            self.x = maxDist + baseDist
+#            self.y = maxY
+#
+#        if (nrBS == 3 and self.id == 1):
+#            self.x = maxDist 
+#            self.y = maxY
+#
+#        if (nrBS == 3 and self.id == 2): 
+#            self.x = maxDist + 2*baseDist
+#            self.y = maxY
+#
+#        if (nrBS == 4 and self.id == 0): 
+#            self.x = maxDist + baseDist
+#            self.y = maxY 
+#
+#        if (nrBS == 4 and self.id == 1):
+#            self.x = maxDist 
+#            self.y = maxY
+#
+#        if (nrBS == 4 and self.id == 2): 
+#            self.x = maxDist + 2*baseDist
+#            self.y = maxY
+#
+#        if (nrBS == 4 and self.id == 3): 
+#            self.x = maxDist + baseDist
+#            self.y = maxY + baseDist 
+#
+#        if (nrBS == 5 and self.id == 0): 
+#            self.x = maxDist + baseDist
+#            self.y = maxY + baseDist 
+#
+#        if (nrBS == 5 and self.id == 1): 
+#            self.x = maxDist 
+#            self.y = maxY + baseDist 
+#
+#        if (nrBS == 5 and self.id == 2): 
+#            self.x = maxDist + 2*baseDist
+#            self.y = maxY + baseDist 
+#
+#        if (nrBS == 5 and self.id == 3): 
+#            self.x = maxDist + baseDist
+#            self.y = maxY 
+#
+#        if (nrBS == 5 and self.id == 4): 
+#            self.x = maxDist + baseDist
+#            self.y = maxY + 2*baseDist 
+#
+#
+#        if (nrBS == 6): 
+#            if (self.id < 3):
+#                self.x = (self.id+1)*maxX/4.0
+#                self.y = maxY/3.0
+#            else:
+#                self.x = (self.id+1-3)*maxX/4.0
+#                self.y = 2*maxY/3.0
+#
+#        if (nrBS == 8): 
+#            if (self.id < 4):
+#                self.x = (self.id+1)*maxX/5.0
+#                self.y = maxY/3.0
+#            else:
+#                self.x = (self.id+1-4)*maxX/5.0
+#                self.y = 2*maxY/3.0
+#
+#        if (nrBS == 24): 
+#            if (self.id < 8):
+#                self.x = (self.id+1)*maxX/9.0
+#                self.y = maxY/4.0
+#            elif (self.id < 16):
+#                self.x = (self.id+1-8)*maxX/9.0
+#                self.y = 2*maxY/4.0
+#            else:
+#                self.x = (self.id+1-16)*maxX/9.0
+#                self.y = 3*maxY/4.0
+#
+#        if (nrBS == 96): 
+#            if (self.id < 24):
+#                self.x = (self.id+1)*maxX/25.0
+#                self.y = maxY/5.0
+#            elif (self.id < 48):
+#                self.x = (self.id+1-24)*maxX/25.0
+#                self.y = 2*maxY/5.0
+#            elif (self.id < 72):
+#                self.x = (self.id+1-48)*maxX/25.0
+#                self.y = 3*maxY/5.0
+#            else:
+#                self.x = (self.id+1-72)*maxX/25.0
+#                self.y = 4*maxY/5.0
 
         
         print("BSx:", self.x, "BSy:", self.y)
 
         global graphics
-        if (graphics):
+        global pointsize
+        if graphics:
             global ax
-            # XXX should be base station position
             if (self.id == 0):
-                ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='blue'))
-                ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='blue'))
-            if (self.id == 1):
-                ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='red'))
-                ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='red'))
-            if (self.id == 2):
-                ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='green'))
-                ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='green'))
-            if (self.id == 3):
-                ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='brown'))
-                ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='brown'))
-            if (self.id == 4):
-                ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='orange'))
-                ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='orange'))
+                ax.add_artist(plt.Circle((self.x, self.y), pointsize*2, fill=True, color='cyan'))
+                ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='black'))
+           # if (self.id == 1):
+           #     ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='red'))
+           #     ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='red'))
+           # if (self.id == 2):
+           #     ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='green'))
+           #     ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='green'))
+           # if (self.id == 3):
+           #     ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='brown'))
+           #     ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='brown'))
+           # if (self.id == 4):
+           #     ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='orange'))
+           #     ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='orange'))
 
-#
+
 # this function creates a node
 #
 class myNode():
-    def __init__(self, id, period, packetlen, myBS):
+    def __init__(self, id, period, dataRate, packetlen, myBS):
         global bs
 
         self.bs = myBS
@@ -366,14 +313,13 @@ class myNode():
         self.y = 0
         self.packet = []
         self.dist = []
+
         # this is very complex prodecure for placing nodes
         # and ensure minimum distance between each pair of nodes
         found = 0
         rounds = 0
         global nodes
         while (found == 0 and rounds < 100):
-            global maxX
-            global maxY
             a = random.random()
             b = random.random()
             if b<a:
@@ -396,7 +342,6 @@ class myNode():
                             print("could not place new node, giving up")
                             exit(-2) 
             else:
-                print("first node")
                 self.x = posx
                 self.y = posy
                 found = 1
@@ -407,25 +352,26 @@ class myNode():
         for i in range(0,nrBS):
             d = np.sqrt((self.x-bs[i].x)*(self.x-bs[i].x)+(self.y-bs[i].y)*(self.y-bs[i].y)) 
             self.dist.append(d)
-            self.packet.append(myPacket(self.id, packetlen, self.dist[i], i))
-        print(('node %d' %id, "x", self.x, "y", self.y, "dist: ", self.dist, "my BS:", self.bs.id))
+            self.packet.append(myPacket(self.id, dataRate, packetlen, self.dist[i], i))
+        print('node %d' %id, "x", self.x, "y", self.y, "dist: ", self.dist, "my BS:", self.bs.id)
 
         self.sent = 0
 
         # graphics for node
         global graphics
-        if (graphics == 1):
+        global pointsize
+        if graphics:
             global ax
-            if (self.bs.id == 0):
-                    ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='blue'))
-            if (self.bs.id == 1):
-                    ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='red'))
-            if (self.bs.id == 2):
-                    ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='green'))
-            if (self.bs.id == 3):
-                    ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='brown'))
-            if (self.bs.id == 4):
-                    ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='orange'))
+            if self.bs.id == 0:
+                    ax.add_artist(plt.Circle((self.x, self.y), pointsize, fill=True, color='blue'))
+            #if self.bs.id == 1:
+            #        ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='red'))
+            #if self.bs.id == 2:
+            #        ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='green'))
+            #if self.bs.id == 3:
+            #        ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='brown'))
+            #if self.bs.id == 4:
+            #        ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='orange'))
 
 
 #
@@ -433,78 +379,41 @@ class myNode():
 # it also sets all parameters, currently random
 #
 class myPacket():
-    def __init__(self, nodeid, plen, distance, bs):
-        global experiment
-        global Ptx
-        global gamma
-        global d0
-        global var
-        global Lpld0
-        global GL
+    def __init__(self, nodeid, data_rate, plen, distance_m, bs):
         global nodes
+        global dr_configurations
+        global tx_power
+        global rx_sensitivity
 
         # new: base station ID
         self.bs = bs
         self.nodeid = nodeid
 
+        # pick configuration values based on data rate
+        self.sf = dr_configurations[data_rate][0]
+        self.bw = dr_configurations[data_rate][1]/1000
+        self.cr = 1 # this means 4/5 coding rate
 
-        # randomize configuration values
-        self.sf = random.randint(6,12)
-        self.cr = random.randint(1,4)
-        self.bw = random.choice([125, 250, 500])
+        #XXX: may want to add multiple channels in the future
+        self.freq = 915000000 # defaults to 915 MHz
 
-        # for certain experiments override these    
-        if experiment==1 or experiment == 0:
-            self.sf = 12
-            self.cr = 4
-            self.bw = 125
+        # calculate packet strength at receiver
+        rx_power = powerEstimate(tx_power, distance_m)
+        self.rssi = rx_power
 
-        # for certain experiments override these    
-        if experiment==2:
-            self.sf = 6
-            self.cr = 1
-            self.bw = 500
-        # lorawan
-        if experiment == 4:
-            self.sf = 12
-            self.cr = 1
-            self.bw = 125
-            
-        # for experiment 3 find the best setting
-        # OBS, some hardcoded values    
-        Prx = Ptx  ## zero path loss by default
-        b
-        # log-shadow
-        Lpl = Lpld0 + 10*gamma*math.log10(distance/d0)
-        print(Lpl)
-        Prx = Ptx - GL - Lpl
-        
-        # transmission range, needs update XXX    
-        self.transRange = 150  
+        # packet on-air time
         self.pl = plen
         self.symTime = (2.0**self.sf)/self.bw
-        self.arriveTime = 0
-        self.rssi = Prx 
-        # frequencies: lower bound + number of 61 Hz steps
-        self.freq = 860000000 + random.randint(0,2622950)
-
-        # for certain experiments override these and
-        # choose some random frequences
-        if experiment == 1:
-            self.freq = random.choice([860000000, 864000000, 868000000])
-        else:
-            self.freq = 860000000
-
         self.rectime = airtime(self.sf,self.cr,self.pl,self.bw)
+        print("Airtime is: {}".format(self.rectime))
+
         # denote if packet is collided
         self.collided = 0
         self.processed = 0
+
         # mark the packet as lost when it's rssi is below the sensitivity
-        # don't do this for experiment 3, as it requires a bit more work
-        if experiment != 3:
-            global minsensi
-            self.lost = self.rssi < minsensi
-            print("node {} bs {} lost {}".format(self.nodeid, self.bs, self.lost))
+        self.lost = self.rssi < rx_sensitivity
+        print("node {} bs {} lost {}".format(self.nodeid, self.bs, self.lost))
 
 
 #
@@ -528,11 +437,11 @@ def transmit(env,node):
 
         global nrBS
         for bs in range(0, nrBS):
-           if (node in packetsAtBS[bs]):
+           if node in packetsAtBS[bs]:
                 print("ERROR: packet already in")
            else:
                 # adding packet if no collision
-                if (checkcollision(node.packet[bs])==1):
+                if checkcollision(node.packet[bs]) == 1:
                     node.packet[bs].collided = 1
                 else:
                     node.packet[bs].collided = 0
@@ -550,16 +459,17 @@ def transmit(env,node):
                 lostPackets.append(node.packet[bs].seqNr)
             else:
                 if node.packet[bs].collided == 0:
-                    if (nrNetworks == 1):
+                    if nrNetworks == 1:
                         packetsRecBS[bs].append(node.packet[bs].seqNr)
                     else:
                         # now need to check for right BS
-                        if (node.bs.id == bs):
+                        #TODO: shouldn't this be adjusted for multiple base stations on a single network?
+                        if node.bs.id == bs:
                             packetsRecBS[bs].append(node.packet[bs].seqNr)
                     # recPackets is a global list of received packets
                     # not updated for multiple networks        
-                    if (recPackets):
-                        if (recPackets[-1] != node.packet[bs].seqNr):
+                    if recPackets:
+                        if recPackets[-1] != node.packet[bs].seqNr:
                             recPackets.append(node.packet[bs].seqNr)
                     else:
                         recPackets.append(node.packet[bs].seqNr)
@@ -571,49 +481,40 @@ def transmit(env,node):
         # can remove it
 
         for bs in range(0, nrBS):                    
-            if (node in packetsAtBS[bs]):
+            if node in packetsAtBS[bs]:
                 packetsAtBS[bs].remove(node)
                 # reset the packet
                 node.packet[bs].collided = 0
                 node.packet[bs].processed = 0
+
+
 #
 # "main" program
 #
 
-# get arguments
-if len(sys.argv) == 10:
-    nrNodes = int(sys.argv[1])                       
-    avgSendTime = int(sys.argv[2])
-    experiment = int(sys.argv[3])
-    simtime = int(sys.argv[4])
-    nrBS = int(sys.argv[5])
-    if len(sys.argv) > 6:
-        full_collision = bool(int(sys.argv[6]))
-    nrNetworks = int(sys.argv[7])
-    baseDist = float(sys.argv[8])
-    print("Nodes per base station:", nrNodes) 
-    print("AvgSendTime (exp. distributed):",avgSendTime)
-    print("Experiment: ", experiment)
-    print("Simtime: ", simtime)
-    print("nrBS: ", nrBS)
-    print("Full Collision: ", full_collision)
-    print("nrNetworks: ", nrNetworks)
-    print("baseDist: ", baseDist)   # x-distance between the two base stations
+# Local Configurations
+nrNodes = 1000
+avgSendTime = 600*1000
+simtime = 100*60*60*1000
+packetLen = 21
 
-else:
-    print("usage: ./directionalLoraIntf.py <nodes> <avgsend> <experiment> <simtime> <basestations> <collision> <networks> <basedist>")
-    print("experiment 0 and 1 use 1 frequency only")
-    exit(-1)
-
+# global configurations
+nrBS = 1
+full_collision = True
+nrNetworks = 1
+graphics = True
+print("Nodes per base station:", nrNodes) 
+print("AvgSendTime (exp. distributed):",avgSendTime)
+print("Simtime: ", simtime)
+print("nrBS: ", nrBS)
+print("Full Collision: ", full_collision)
+print("nrNetworks: ", nrNetworks)
 
 # global stuff
 nodes = []
 packetsAtBS = []
 env = simpy.Environment()
 
-
-# max distance: 300m in city, 3000 m outside (5 km Utz experiment)
-# also more unit-disc like according to Utz
 nrCollisions = 0
 nrReceived = 0
 nrProcessed = 0
@@ -626,43 +527,33 @@ recPackets=[]
 collidedPackets=[]
 lostPackets = []
 
-Ptx = 14
-gamma = 2.08
-d0 = 40.0
-var = 0           # variance ignored for now
-Lpld0 = 127.41
-GL = 0
+# set of [Spreading Factor, Bandwidth, Sensitivity] for each US data rate
+dr_configurations = {
+    0: [10, 125000, -132],
+    1: [9,  125000, -129],
+    2: [8,  125000, -126],
+    3: [7,  125000, -123],
+    4: [8,  500000, -119],
+}
 
-sensi = np.array([sf7,sf8,sf9,sf10,sf11,sf12])
+# figure out the minimal sensitivity for the given experiment
+dataRate = 3
+rx_sensitivity = dr_configurations[dataRate][2]
+tx_power = 14
 
-## figure out the minimal sensitivity for the given experiment
-minsensi = -200.0
-if experiment in [0,1,4]:
-    minsensi = sensi[5,2]  # 5th row is SF12, 2nd column is BW125
-elif experiment == 2:
-    minsensi = -112.0   # no experiments, so value from datasheet
-elif experiment == 3:
-    minsensi = np.amin(sensi) ## Experiment 3 can use any setting, so take minimum
+# uses Hata Model for maximum distance
+maxDist = rangeEstimate(tx_power, rx_sensitivity)
+print("Max distance: {} meters".format(maxDist))
 
-Lpl = Ptx - minsensi
-print("amin", minsensi, "Lpl", Lpl)
-maxDist = d0*(math.e**((Lpl-Lpld0)/(10.0*gamma)))
-print("maxDist:", maxDist)
+# set a point size for graphics displays based on distance
+pointsize = 0.01*maxDist
 
-# size of area
-xmax = maxDist*(nrBS+2) + 20
-ymax = maxDist*(nrBS+1) + 20
-
+#XXX: for now we're running with a single channel. Should fix this maybe
 # maximum number of packets the BS can receive at the same time
-maxBSReceives = 8
-
-maxX = maxDist + baseDist*(nrBS) 
-print("maxX ", maxX)
-maxY = 2 * maxDist * math.sin(30*(math.pi/180)) # == maxdist
-print("maxY", maxY)
+maxBSReceives = 1
 
 # prepare graphics and add sink
-if (graphics == 1):
+if graphics:
     plt.ion()
     plt.figure()
     ax = plt.gcf().gca()
@@ -679,21 +570,21 @@ for i in range(0,nrBS):
     packetsAtBS.append([])
     packetsRecBS.append([])
 
-
+#TODO: adjust this setup
 for i in range(0,nrNodes):
     # myNode takes period (in ms), base station id packetlen (in Bytes)
     # 1000000 = 16 min
     for j in range(0,nrBS):
         # create nrNodes for each base station
-        node = myNode(i*nrBS+j, avgSendTime,20,bs[j])
+        node = myNode(i*nrBS+j, avgSendTime, dataRate, packetLen, bs[j])
         nodes.append(node)
 
         env.process(transmit(env,node))
 
 #prepare show
-if (graphics == 1):
-    plt.xlim([0, maxX+50])
-    plt.ylim([0, maxX+50])
+if graphics:
+    plt.xlim([0-0.1*maxDist, 2*maxDist+0.1*maxDist])
+    plt.ylim([0-0.1*maxDist, 2*maxDist+0.1*maxDist])
     plt.draw()
     plt.show()  
 
@@ -708,6 +599,8 @@ with open('basestation.txt', 'w') as bfile:
 
 # start simulation
 env.run(until=simtime)
+
+#TODO: need to update these output statistics
 
 # print stats and save into file
 print("nr received packets (independent of right base station)", len(recPackets))
@@ -747,12 +640,11 @@ print("avg DER: ", avgDER)
 print("DER with 1 network:", derALL)
 
 # this can be done to keep graphics visible
-if (graphics == 1):
+if graphics:
     input('Press Enter to continue ...')
 
 # save experiment data into a dat file that can be read by e.g. gnuplot
-# name of file would be:  exp0.dat for experiment 0
-fname = "exp" + str(experiment) + "d99" + "BS" + str(nrBS) + "Intf.dat"
+fname = "lorasim_{}node_{}basestation_{}network_results.dat".format(nrNodes, nrBs, nrNetworks)
 print(fname)
 if os.path.isfile(fname):
     res = "\n" + str(nrNodes) + " " + str(der[0]) 
