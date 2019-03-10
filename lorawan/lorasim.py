@@ -41,30 +41,25 @@ def checkcollision(packet):
         for other in packetsAtBS[packet.bs]:
             if other.id != packet.nodeid:
                # simple collision
-               if frequencyCollision(packet, other.packet[packet.bs]) \
-                   and sfCollision(packet, other.packet[packet.bs]):
-                   if full_collision:
-                       if timingCollision(packet, other.packet[packet.bs]):
-                           # check who collides in the power domain
-                           c = powerCollision(packet, other.packet[packet.bs])
-                           # mark all the collided packets
-                           # either this one, the other one, or both
-                           for p in c:
-                               p.collided = 1
-                               if p == packet:
-                                   col = 1
+               if frequencyCollision(packet, other.packet[packet.bs]) and sfCollision(packet, other.packet[packet.bs]):
+                   # more complicated collisions
+                   if timingCollision(packet, other.packet[packet.bs]):
+                       # check who collides in the power domain
+                       c = powerCollision(packet, other.packet[packet.bs])
+                       # mark all the collided packets
+                       # either this one, the other one, or both
+                       for p in c:
+                           p.collided = 1
+                           if p == packet:
+                               col = 1
 
-                           # if the packet didn't collide, it only survived due to capture effect
-                           if packet not in c:
-                               captured = True
+                       # if the packet didn't collide, it only survived due to capture effect
+                       if packet not in c:
+                           captured = True
 
-                       else:
-                           # no timing collision, all fine
-                           pass
                    else:
-                       packet.collided = 1
-                       other.packet[packet.bs].collided = 1  # other also got lost, if it wasn't lost already
-                       col = 1
+                       # no timing collision, all fine
+                       pass
         return (col, captured)
     return (0, captured)
 
@@ -467,19 +462,17 @@ def transmit(env,node):
 #
 
 # Local Configurations
-maxNodes = 1000         # maximum number of nodes to increment to
-maxBS = 10              # maximum number of base stations to increment to
+maxNodes = 2000         # maximum number of nodes to increment to
+maxBS = 20              # maximum number of base stations to increment to
 repeatCount = 10        # number of times to try each base station amount
 avgSendTime = 60*1000   # once per minute
 simtime = 24*60*60*1000 # one day
 packetLen = 20          # 20 byte packets
 
 # global configurations
-full_collision = True
 graphics = False
 print("AvgSendTime (exp. distributed):",avgSendTime)
 print("Simtime: ", simtime)
-print("Full Collision: ", full_collision)
 
 # set of [Spreading Factor, Bandwidth, Sensitivity] for each US data rate
 dr_configurations = {
@@ -577,15 +570,23 @@ for nodeCount in range(100, maxNodes+100, 100):
             for i in range(0, nrNetworks):
                 packetsRecNetworkCaptureEffect.append([])
 
-            for i in range(0, nrNodes):
-                # myNode takes period (in ms), base station id packetlen (in Bytes)
-                # 1000000 = 16 min
-                for j in range(0, nrNetworks):
-                    # create nrNodes for each base station
-                    node = myNode(i*nrNetworks+j, avgSendTime, dataRate, packetLen, j)
-                    nodes.append(node)
+            # create N nodes on irrelevant network, 100 on multi-gateway network
+            for i in range(nrNodes):
+                node = myNode(i, avgSendTime, dataRate, packetLen, 0)
+                nodes.append(node)
+                env.process(transmit(env,node))
+            for i in range(100):
+                node = myNode(nrNodes+i, avgSendTime, dataRate, packetLen, 1)
+                nodes.append(node)
+                env.process(transmit(env,node))
 
-                    env.process(transmit(env,node))
+            ##XXX: remove symmetric node creation for now
+            #for i in range(0, nrNodes):
+            #    for j in range(0, nrNetworks):
+            #        # create nrNodes for each base station
+            #        node = myNode(i*nrNetworks+j, avgSendTime, dataRate, packetLen, j)
+            #        nodes.append(node)
+            #        env.process(transmit(env,node))
 
             #prepare show
             if graphics:
@@ -601,7 +602,7 @@ for nodeCount in range(100, maxNodes+100, 100):
             network_transmissions = [0]*nrNetworks
             network_receptions = [0]*nrNetworks
             for i in range(0, nrNetworks):
-                for j in range(0, nrNodes*nrNetworks):
+                for j in range(len(nodes)):
                     if nodes[j].networkID == i:
                         network_transmissions[i] += nodes[j].sent
 
@@ -650,12 +651,13 @@ for nodeCount in range(100, maxNodes+100, 100):
                         bfile.write('{} {} {} {}\n'.format(basestation.id, basestation.networkID, basestation.x, basestation.y))
 
             if graphics:
+                #input('Testing...')
                 plt.pause(1)
             print("")
 
 
 # record results to file
-with open('results_{}nodes_{}basestations_{}repeats.dict'.format(maxNodes, maxBS, repeatCount), 'w') as outfile:
+with open('results_{}nodes_{}basestations_{}repeats_100setup.dict'.format(maxNodes, maxBS, repeatCount), 'w') as outfile:
     outfile.write('{}\n'.format(results))
 
 
