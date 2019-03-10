@@ -33,9 +33,10 @@ import os
 # Note: called before a packet (or rather node) is inserted into the list
 def checkcollision(packet):
     col = 0 # flag needed since there might be several collisions for packet
+    captured = False
     # lost packets don't collide
     if packet.lost:
-       return 0
+       return (0, captured)
     if packetsAtBS[packet.bs]:
         for other in packetsAtBS[packet.bs]:
             if other.id != packet.nodeid:
@@ -52,6 +53,11 @@ def checkcollision(packet):
                                p.collided = 1
                                if p == packet:
                                    col = 1
+
+                           # if the packet didn't collide, it only survived due to capture effect
+                           if packet not in c:
+                               captured = True
+
                        else:
                            # no timing collision, all fine
                            pass
@@ -59,8 +65,8 @@ def checkcollision(packet):
                        packet.collided = 1
                        other.packet[packet.bs].collided = 1  # other also got lost, if it wasn't lost already
                        col = 1
-        return col
-    return 0
+        return (col, captured)
+    return (0, captured)
 
 #
 # frequencyCollision, conditions
@@ -97,23 +103,25 @@ def powerCollision(p1, p2):
     return (p2,)
 
 def timingCollision(p1, p2):
-    # assuming p1 is the freshly arrived packet and this is the last check
-    # we've already determined that p1 is a weak packet, so the only
-    # way we can win is by being late enough (only the first n - 5 preamble symbols overlap)
-    
-    # assuming 8 preamble symbols
-    Npream = 8
-    
-    # we can lose at most (Npream - 5) * Tsym of our preamble
-    Tpreamb = 2**p1.sf/(1.0*p1.bw) * (Npream - 5)
-    
-    # check whether p2 ends in p1's critical section
-    p2_end = p2.addTime + p2.rectime
-    p1_cs = env.now + Tpreamb
-    if p1_cs < p2_end:
-        # p1 collided with p2 and lost
+    if p1.rssi < p2.rssi:
+        # we've already determined that p1 is a weak packet, so the only
+        # way we can win is by being late enough (only the first n - 5 preamble symbols overlap)
+        
+        # assuming 8 preamble symbols
+        Npream = 8
+        
+        # we can lose at most (Npream - 5) * Tsym of our preamble
+        Tpreamb = 2**p1.sf/(1.0*p1.bw) * (Npream - 5)
+        
+        # check whether p2 ends in p1's critical section
+        p2_end = p2.addTime + p2.rectime
+        p1_cs = env.now + Tpreamb
+        if p1_cs < p2_end:
+            # p1 collided with p2 and lost
+            return True
+        return False
+    else:
         return True
-    return False
 
 # this function computes the airtime of a packet
 # according to LoraDesignGuide_STD.pdf
@@ -160,8 +168,9 @@ def powerEstimate(tx_power, distance_m):
 # this function creates a BS
 #
 class myBS():
-    def __init__(self, id):
+    def __init__(self, id, networkID):
         self.id = id
+        self.networkID = networkID
         self.x = 0
         self.y = 0
 
@@ -170,124 +179,78 @@ class myBS():
         global maxDist
         global baseDist
 
-        if (nrBS == 1 and self.id == 0):
-            self.x = maxDist
-            self.y = maxDist
-        else:
-            print("Too many base stations!!")
-            sys.exit(1)
+        # remove the "planned" setup for now and replace with random distribution
+        if False:
+            if self.id == 0 or self.id == 1:
+                self.x = 0
+                self.y = 0
+            elif self.id == 2:
+                self.x = maxDist/2
+                self.y = 0
+            elif self.id == 3:
+                self.x = -maxDist/2
+                self.y = 0
+            elif self.id == 4:
+                self.x = 0
+                self.y = maxDist/2
+            elif self.id == 5:
+                self.x = 0
+                self.y = -maxDist/2
+            elif self.id == 6:
+                self.x = maxDist/2*math.sin(math.pi/4)
+                self.y = maxDist/2*math.cos(math.pi/4)
+            elif self.id == 7:
+                self.x = -maxDist/2*math.sin(math.pi/4)
+                self.y = -maxDist/2*math.cos(math.pi/4)
+            elif self.id == 8:
+                self.x = -maxDist/2*math.sin(math.pi/4)
+                self.y = maxDist/2*math.cos(math.pi/4)
+            elif self.id == 9:
+                self.x = maxDist/2*math.sin(math.pi/4)
+                self.y = -maxDist/2*math.cos(math.pi/4)
+            else:
+                print("Too many base stations!!")
+                sys.exit(1)
 
-#        if (nrBS == 2 and self.id == 0):
-#            self.x = maxDist
-#            self.y = maxY
-#
-#        if (nrBS == 2 and self.id == 1):
-#            self.x = maxDist + baseDist
-#            self.y = maxY
-#
-#        if (nrBS == 3 and self.id == 0):
-#            self.x = maxDist + baseDist
-#            self.y = maxY
-#
-#        if (nrBS == 3 and self.id == 1):
-#            self.x = maxDist 
-#            self.y = maxY
-#
-#        if (nrBS == 3 and self.id == 2): 
-#            self.x = maxDist + 2*baseDist
-#            self.y = maxY
-#
-#        if (nrBS == 4 and self.id == 0): 
-#            self.x = maxDist + baseDist
-#            self.y = maxY 
-#
-#        if (nrBS == 4 and self.id == 1):
-#            self.x = maxDist 
-#            self.y = maxY
-#
-#        if (nrBS == 4 and self.id == 2): 
-#            self.x = maxDist + 2*baseDist
-#            self.y = maxY
-#
-#        if (nrBS == 4 and self.id == 3): 
-#            self.x = maxDist + baseDist
-#            self.y = maxY + baseDist 
-#
-#        if (nrBS == 5 and self.id == 0): 
-#            self.x = maxDist + baseDist
-#            self.y = maxY + baseDist 
-#
-#        if (nrBS == 5 and self.id == 1): 
-#            self.x = maxDist 
-#            self.y = maxY + baseDist 
-#
-#        if (nrBS == 5 and self.id == 2): 
-#            self.x = maxDist + 2*baseDist
-#            self.y = maxY + baseDist 
-#
-#        if (nrBS == 5 and self.id == 3): 
-#            self.x = maxDist + baseDist
-#            self.y = maxY 
-#
-#        if (nrBS == 5 and self.id == 4): 
-#            self.x = maxDist + baseDist
-#            self.y = maxY + 2*baseDist 
-#
-#
-#        if (nrBS == 6): 
-#            if (self.id < 3):
-#                self.x = (self.id+1)*maxX/4.0
-#                self.y = maxY/3.0
-#            else:
-#                self.x = (self.id+1-3)*maxX/4.0
-#                self.y = 2*maxY/3.0
-#
-#        if (nrBS == 8): 
-#            if (self.id < 4):
-#                self.x = (self.id+1)*maxX/5.0
-#                self.y = maxY/3.0
-#            else:
-#                self.x = (self.id+1-4)*maxX/5.0
-#                self.y = 2*maxY/3.0
-#
-#        if (nrBS == 24): 
-#            if (self.id < 8):
-#                self.x = (self.id+1)*maxX/9.0
-#                self.y = maxY/4.0
-#            elif (self.id < 16):
-#                self.x = (self.id+1-8)*maxX/9.0
-#                self.y = 2*maxY/4.0
-#            else:
-#                self.x = (self.id+1-16)*maxX/9.0
-#                self.y = 3*maxY/4.0
-#
-#        if (nrBS == 96): 
-#            if (self.id < 24):
-#                self.x = (self.id+1)*maxX/25.0
-#                self.y = maxY/5.0
-#            elif (self.id < 48):
-#                self.x = (self.id+1-24)*maxX/25.0
-#                self.y = 2*maxY/5.0
-#            elif (self.id < 72):
-#                self.x = (self.id+1-48)*maxX/25.0
-#                self.y = 3*maxY/5.0
-#            else:
-#                self.x = (self.id+1-72)*maxX/25.0
-#                self.y = 4*maxY/5.0
+        # this is very complex prodecure for placing base stations
+        # and ensure minimum distance between each pair of base stations
+        found = 0
+        rounds = 0
+        global bs
+        while (found == 0 and rounds < 100):
+            a = random.random()
+            b = random.random()
+            if b<a:
+                a,b = b,a
+            posx = b*maxDist*math.cos(2*math.pi*a/b)
+            posy = b*maxDist*math.sin(2*math.pi*a/b)
+            if len(bs) > 0:
+                for index, n in enumerate(bs):
+                    dist = np.sqrt(((abs(n.x-posx))**2)+((abs(n.y-posy))**2)) 
+                    if dist >= 0: 
+                        found = 1
+                        self.x = posx
+                        self.y = posy
+                    else:
+                        rounds = rounds + 1
+                        if rounds == 100:
+                            print("could not place new base station, giving up")
+                            exit(-2) 
+            else:
+                self.x = posx
+                self.y = posy
+                found = 1
 
-        
-        print("BSx:", self.x, "BSy:", self.y)
+        #print("BSx:", self.x, "BSy:", self.y)
 
         global graphics
         global pointsize
         if graphics:
             global ax
-            if (self.id == 0):
+            if (self.networkID == 0):
                 ax.add_artist(plt.Circle((self.x, self.y), pointsize*2, fill=True, color='cyan'))
-                ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='black'))
-           # if (self.id == 1):
-           #     ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='red'))
-           #     ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='red'))
+            if (self.networkID == 1):
+                ax.add_artist(plt.Circle((self.x, self.y), pointsize*2, fill=True, color='orange'))
            # if (self.id == 2):
            #     ax.add_artist(plt.Circle((self.x, self.y), 4, fill=True, color='green'))
            #     ax.add_artist(plt.Circle((self.x, self.y), maxDist, fill=False, color='green'))
@@ -302,17 +265,16 @@ class myBS():
 # this function creates a node
 #
 class myNode():
-    def __init__(self, id, period, dataRate, packetlen, myBS):
-        global bs
+    def __init__(self, id, period, dataRate, packetlen, networkID):
 
-        self.bs = myBS
         self.id = id
-        self.period = period
-
+        self.networkID = networkID
         self.x = 0
         self.y = 0
+        self.period = period
         self.packet = []
         self.dist = []
+        self.sent = 0
 
         # this is very complex prodecure for placing nodes
         # and ensure minimum distance between each pair of nodes
@@ -324,8 +286,8 @@ class myNode():
             b = random.random()
             if b<a:
                 a,b = b,a
-            posx = b*maxDist*math.cos(2*math.pi*a/b)+self.bs.x
-            posy = b*maxDist*math.sin(2*math.pi*a/b)+self.bs.y
+            posx = b*maxDist*math.cos(2*math.pi*a/b)
+            posy = b*maxDist*math.sin(2*math.pi*a/b)
             if len(nodes) > 0:
                 for index, n in enumerate(nodes):
                     dist = np.sqrt(((abs(n.x-posx))**2)+((abs(n.y-posy))**2)) 
@@ -348,24 +310,23 @@ class myNode():
 
 
         # create "virtual" packet for each BS
+        global bs
         global nrBS
         for i in range(0,nrBS):
             d = np.sqrt((self.x-bs[i].x)*(self.x-bs[i].x)+(self.y-bs[i].y)*(self.y-bs[i].y)) 
             self.dist.append(d)
             self.packet.append(myPacket(self.id, dataRate, packetlen, self.dist[i], i))
-        print('node %d' %id, "x", self.x, "y", self.y, "dist: ", self.dist, "my BS:", self.bs.id)
-
-        self.sent = 0
+        #print('node %d' %id, "x", self.x, "y", self.y, "dist: ", self.dist, "myNetwork:", self.networkID)
 
         # graphics for node
         global graphics
         global pointsize
         if graphics:
             global ax
-            if self.bs.id == 0:
+            if self.networkID == 0:
                     ax.add_artist(plt.Circle((self.x, self.y), pointsize, fill=True, color='blue'))
-            #if self.bs.id == 1:
-            #        ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='red'))
+            if self.networkID == 1:
+                    ax.add_artist(plt.Circle((self.x, self.y), pointsize, fill=True, color='red'))
             #if self.bs.id == 2:
             #        ax.add_artist(plt.Circle((self.x, self.y), 2, fill=True, color='green'))
             #if self.bs.id == 3:
@@ -405,15 +366,16 @@ class myPacket():
         self.pl = plen
         self.symTime = (2.0**self.sf)/self.bw
         self.rectime = airtime(self.sf,self.cr,self.pl,self.bw)
-        print("Airtime is: {}".format(self.rectime))
 
         # denote if packet is collided
         self.collided = 0
-        self.processed = 0
+        self.captured = False
 
         # mark the packet as lost when it's rssi is below the sensitivity
         self.lost = self.rssi < rx_sensitivity
-        print("node {} bs {} lost {}".format(self.nodeid, self.bs, self.lost))
+        #print("node {} bs {} lost {}".format(self.nodeid, self.bs, self.lost))
+        if self.lost:
+            print("*****Packet was totally lost. This shouldn't happen******")
 
 
 #
@@ -434,58 +396,70 @@ def transmit(env,node):
 
         global packetSeq
         packetSeq = packetSeq + 1
+        mySeqNo = packetSeq
 
         global nrBS
-        for bs in range(0, nrBS):
-           if node in packetsAtBS[bs]:
+        for i in range(0, nrBS):
+           if node in packetsAtBS[i]:
                 print("ERROR: packet already in")
            else:
                 # adding packet if no collision
-                if checkcollision(node.packet[bs]) == 1:
-                    node.packet[bs].collided = 1
+                (collided, captured) = checkcollision(node.packet[i])
+                if collided == 1:
+                    node.packet[i].collided = 1
+                    node.packet[i].captured = False # can't have survived due to capture effect if it didn't survive...
                 else:
-                    node.packet[bs].collided = 0
-                packetsAtBS[bs].append(node)
-                node.packet[bs].addTime = env.now
-                node.packet[bs].seqNr = packetSeq
+                    node.packet[i].collided = 0
+                    node.packet[i].captured = captured
+                packetsAtBS[i].append(node)
+                node.packet[i].addTime = env.now
+                node.packet[i].seqNr = packetSeq
  
         # take first packet rectime        
         yield env.timeout(node.packet[0].rectime)
 
         # if packet did not collide, add it in list of received packets
         # unless it is already in
-        for bs in range(0, nrBS):
-            if node.packet[bs].lost:
-                lostPackets.append(node.packet[bs].seqNr)
+        global bs
+        only_captured = True
+        received = False
+        for i in range(0, nrBS):
+            if node.packet[i].lost:
+                lostPackets.append(node.packet[i].seqNr)
             else:
-                if node.packet[bs].collided == 0:
+                if node.packet[i].collided == 0:
                     if nrNetworks == 1:
-                        packetsRecBS[bs].append(node.packet[bs].seqNr)
+                        received = True
+                        packetsRecBS[i].append(node.packet[i].seqNr)
                     else:
-                        # now need to check for right BS
-                        #TODO: shouldn't this be adjusted for multiple base stations on a single network?
-                        if node.bs.id == bs:
-                            packetsRecBS[bs].append(node.packet[bs].seqNr)
+                        # now need to check for right network
+                        if node.networkID == bs[i].networkID:
+                            received = True
+                            packetsRecBS[i].append(node.packet[i].seqNr)
+                            if not node.packet[i].captured:
+                                only_captured = False
                     # recPackets is a global list of received packets
                     # not updated for multiple networks        
                     if recPackets:
-                        if recPackets[-1] != node.packet[bs].seqNr:
-                            recPackets.append(node.packet[bs].seqNr)
+                        if recPackets[-1] != node.packet[i].seqNr:
+                            recPackets.append(node.packet[i].seqNr)
                     else:
-                        recPackets.append(node.packet[bs].seqNr)
+                        recPackets.append(node.packet[i].seqNr)
                 else:
                     # XXX only for debugging
-                    collidedPackets.append(node.packet[bs].seqNr)
+                    collidedPackets.append(node.packet[i].seqNr)
+
+        if received and only_captured:
+            packetsRecNetworkCaptureEffect[node.networkID].append(mySeqNo)
 
         # complete packet has been received by base station
         # can remove it
 
-        for bs in range(0, nrBS):                    
-            if node in packetsAtBS[bs]:
-                packetsAtBS[bs].remove(node)
+        for i in range(0, nrBS):                    
+            if node in packetsAtBS[i]:
+                packetsAtBS[i].remove(node)
                 # reset the packet
-                node.packet[bs].collided = 0
-                node.packet[bs].processed = 0
+                node.packet[i].collided = 0
 
 
 #
@@ -493,39 +467,19 @@ def transmit(env,node):
 #
 
 # Local Configurations
-nrNodes = 1000
-avgSendTime = 600*1000
-simtime = 100*60*60*1000
-packetLen = 21
+maxNodes = 1000         # maximum number of nodes to increment to
+maxBS = 10              # maximum number of base stations to increment to
+repeatCount = 10        # number of times to try each base station amount
+avgSendTime = 60*1000   # once per minute
+simtime = 24*60*60*1000 # one day
+packetLen = 20          # 20 byte packets
 
 # global configurations
-nrBS = 1
 full_collision = True
-nrNetworks = 1
-graphics = True
-print("Nodes per base station:", nrNodes) 
+graphics = False
 print("AvgSendTime (exp. distributed):",avgSendTime)
 print("Simtime: ", simtime)
-print("nrBS: ", nrBS)
 print("Full Collision: ", full_collision)
-print("nrNetworks: ", nrNetworks)
-
-# global stuff
-nodes = []
-packetsAtBS = []
-env = simpy.Environment()
-
-nrCollisions = 0
-nrReceived = 0
-nrProcessed = 0
-
-# global value of packet sequence numbers
-packetSeq = 0
-
-# list of received packets
-recPackets=[]
-collidedPackets=[]
-lostPackets = []
 
 # set of [Spreading Factor, Bandwidth, Sensitivity] for each US data rate
 dr_configurations = {
@@ -539,117 +493,173 @@ dr_configurations = {
 # figure out the minimal sensitivity for the given experiment
 dataRate = 3
 rx_sensitivity = dr_configurations[dataRate][2]
-tx_power = 14
+tx_power = 20
 
 # uses Hata Model for maximum distance
-maxDist = rangeEstimate(tx_power, rx_sensitivity)
+maxDist = rangeEstimate(tx_power, rx_sensitivity)/2
 print("Max distance: {} meters".format(maxDist))
+print("")
 
-# set a point size for graphics displays based on distance
-pointsize = 0.01*maxDist
+# keep a dict of all results
+results = {}
 
-#XXX: for now we're running with a single channel. Should fix this maybe
-# maximum number of packets the BS can receive at the same time
-maxBSReceives = 1
+# number of nodes each network contains
+for nodeCount in range(100, maxNodes+100, 100):
+    results[nodeCount] = {}
 
-# prepare graphics and add sink
-if graphics:
-    plt.ion()
-    plt.figure()
-    ax = plt.gcf().gca()
+    # total across all networks, 1 for first network, N-1 for other network
+    for baseStationCount in range(2,maxBS+1+1):
+        results[nodeCount][baseStationCount] = []
 
-# list of base stations
-bs = []
+        for repetition in range(repeatCount):
+            results[nodeCount][baseStationCount].append({})
 
-# list of packets at each base station, init with 0 packets
-packetsAtBS = []
-packetsRecBS = []
-for i in range(0,nrBS):
-    b = myBS(i)
-    bs.append(b)
-    packetsAtBS.append([])
-    packetsRecBS.append([])
+            # configurations
+            nrNodes = nodeCount
+            nrBS = baseStationCount
+            nrNetworks = 2 # 1 or 2 networks
+            print("Run configuration:")
+            print("\tNodes per base station:", nrNodes) 
+            print("\tnrBS: ", nrBS)
+            print("\tnrNetworks: ", nrNetworks)
 
-#TODO: adjust this setup
-for i in range(0,nrNodes):
-    # myNode takes period (in ms), base station id packetlen (in Bytes)
-    # 1000000 = 16 min
-    for j in range(0,nrBS):
-        # create nrNodes for each base station
-        node = myNode(i*nrBS+j, avgSendTime, dataRate, packetLen, bs[j])
-        nodes.append(node)
+            # global stuff
+            nodes = []
+            env = simpy.Environment()
 
-        env.process(transmit(env,node))
+            nrCollisions = 0
+            nrReceived = 0
+            nrProcessed = 0
 
-#prepare show
-if graphics:
-    plt.xlim([0-0.1*maxDist, 2*maxDist+0.1*maxDist])
-    plt.ylim([0-0.1*maxDist, 2*maxDist+0.1*maxDist])
-    plt.draw()
-    plt.show()  
+            # global value of packet sequence numbers
+            packetSeq = 0
 
-# store nodes and basestation locations
-with open('nodes.txt', 'w') as nfile:
-    for node in nodes:
-        nfile.write('{x} {y} {id}\n'.format(**vars(node)))
+            # list of received packets
+            recPackets=[]
+            collidedPackets=[]
+            lostPackets = []
 
-with open('basestation.txt', 'w') as bfile:
-    for basestation in bs:
-        bfile.write('{x} {y} {id}\n'.format(**vars(basestation)))
+            # set a point size for graphics displays based on distance
+            pointsize = 0.01*maxDist
 
-# start simulation
-env.run(until=simtime)
+            #XXX: for now we're running with a single channel. Should fix this maybe
+            # maximum number of packets the BS can receive at the same time
+            maxBSReceives = 1
 
-#TODO: need to update these output statistics
+            # prepare graphics and add sink
+            if graphics:
+                plt.ion()
+                plt.figure()
+                ax = plt.gcf().gca()
+                ax.add_artist(plt.Circle((0, 0), maxDist, fill=False, color='black'))
 
-# print stats and save into file
-print("nr received packets (independent of right base station)", len(recPackets))
-print("nr collided packets", len(collidedPackets))
-print("nr lost packets (not correct)", len(lostPackets))
+            # list of base stations
+            bs = []
 
-sum = 0
-for i in range(0,nrBS):
-    print("packets at BS",i, ":", len(packetsRecBS[i]))
-    sum = sum + len(packetsRecBS[i])
-print("sent packets: ", packetSeq)
-print("overall received at right BS: ", sum)
+            # list of packets at each base station, init with 0 packets
+            packetsAtBS = []
+            packetsRecBS = []
+            for i in range(0,nrBS):
+                b = None
 
-sumSent = 0
-sent = []
-for i in range(0, nrBS):
-    sent.append(0)
-for i in range(0,nrNodes*nrBS):
-    sumSent = sumSent + nodes[i].sent
-    print("id for node ", nodes[i].id, "BS:", nodes[i].bs.id, " sent: ", nodes[i].sent)
-    sent[nodes[i].bs.id] = sent[nodes[i].bs.id] + nodes[i].sent
-for i in range(0, nrBS):
-    print("send to BS[",i,"]:", sent[i])
+                # Put the first base station on its own network, and the rest on network 2
+                if nrNetworks == 2 and i != 0:
+                    b = myBS(i, 1)
+                else:
+                    b = myBS(i, 0)
 
-print("sumSent: ", sumSent)
+                bs.append(b)
+                packetsAtBS.append([])
+                packetsRecBS.append([])
 
-der = []
-# data extraction rate
-derALL = len(recPackets)/float(sumSent)
-sumder = 0
-for i in range(0, nrBS):
-    der.append(len(packetsRecBS[i])/float(sent[i]))
-    print("DER BS[",i,"]:", der[i])
-    sumder = sumder + der[i]
-avgDER = (sumder)/nrBS
-print("avg DER: ", avgDER)
-print("DER with 1 network:", derALL)
+            # keep track of packets only received due to capture effect
+            packetsRecNetworkCaptureEffect = []
+            for i in range(0, nrNetworks):
+                packetsRecNetworkCaptureEffect.append([])
 
-# this can be done to keep graphics visible
+            for i in range(0, nrNodes):
+                # myNode takes period (in ms), base station id packetlen (in Bytes)
+                # 1000000 = 16 min
+                for j in range(0, nrNetworks):
+                    # create nrNodes for each base station
+                    node = myNode(i*nrNetworks+j, avgSendTime, dataRate, packetLen, j)
+                    nodes.append(node)
+
+                    env.process(transmit(env,node))
+
+            #prepare show
+            if graphics:
+                plt.xlim([-1.1*maxDist, 1.1*maxDist])
+                plt.ylim([-1.1*maxDist, 1.1*maxDist])
+                plt.draw()
+                plt.show()  
+
+            # start simulation
+            env.run(until=simtime)
+
+            # determine total number of unique packets received by the network
+            network_transmissions = [0]*nrNetworks
+            network_receptions = [0]*nrNetworks
+            for i in range(0, nrNetworks):
+                for j in range(0, nrNodes*nrNetworks):
+                    if nodes[j].networkID == i:
+                        network_transmissions[i] += nodes[j].sent
+
+                all_received_packets = []
+                all_captured_packets = []
+                for j in range(0, nrBS):
+                    if bs[j].networkID == i:
+                        all_received_packets += packetsRecBS[j]
+                network_receptions[i] = len(set(all_received_packets))
+
+            # general stats on performance
+            print("General stats")
+            print("\ttransmitted packets", sum(network_transmissions))
+            if packetSeq != sum(network_transmissions):
+                print("Transmission count failure. {} != {}".format(packetSeq, sum(network_transmissions)))
+                sys.exit(1)
+            print("\treceived packets", len(recPackets))
+            print("\treceived packets (deduplicated) {}".format(sum(network_receptions)))
+            print("\tcollided packets", len(collidedPackets))
+            print("\tlost packets (should be zero)", len(lostPackets))
+
+            # network-specific statistics
+            for i in range(0, nrNetworks):
+                print("Network stats {}".format(i))
+                print("\tnumber of base stations {}".format(len([station for station in bs if station.networkID == i])))
+                print("\tnumber of nodes {}".format(len([node for node in nodes if node.networkID == i])))
+                print("\ttransmitted packets {}".format(network_transmissions[i]))
+                print("\treceived packets {} (deduplicated)".format(network_receptions[i]))
+                print("\treceived packets due to capture effect {}".format(len(packetsRecNetworkCaptureEffect[i])))
+                print("\tpacket reception rate {}".format(network_receptions[i]/network_transmissions[i]))
+
+                # save results
+                results[nodeCount][baseStationCount][repetition][i] = network_receptions[i]/network_transmissions[i]
+
+            # do not need to record node or basestation location
+            if False:
+                # store nodes and basestation locations to file
+                with open('nodes.txt', 'w') as nfile:
+                    nfile.write("#NodeID NetworkID NodeX NodeY\n")
+                    for node in nodes:
+                        nfile.write('{} {} {} {}\n'.format(node.id, node.networkID, node.x, node.y))
+
+                with open('basestation.txt', 'w') as bfile:
+                    bfile.write("#BSID NetworkID BSX BSI\n")
+                    for basestation in bs:
+                        bfile.write('{} {} {} {}\n'.format(basestation.id, basestation.networkID, basestation.x, basestation.y))
+
+            if graphics:
+                plt.pause(1)
+            print("")
+
+
+# record results to file
+with open('results_{}nodes_{}basestations_{}repeats.dict'.format(maxNodes, maxBS, repeatCount), 'w') as outfile:
+    outfile.write('{}\n'.format(results))
+
+
+# keep graphics visible
 if graphics:
     input('Press Enter to continue ...')
 
-# save experiment data into a dat file that can be read by e.g. gnuplot
-fname = "lorasim_{}node_{}basestation_{}network_results.dat".format(nrNodes, nrBs, nrNetworks)
-print(fname)
-if os.path.isfile(fname):
-    res = "\n" + str(nrNodes) + " " + str(der[0]) 
-else:
-    res = "# nrNodes DER0 AVG-DER\n" + str(nrNodes) + " " + str(der[0]) + " " + str(avgDER) 
-with open(fname, "a") as myfile:
-    myfile.write(res)
-myfile.close()
